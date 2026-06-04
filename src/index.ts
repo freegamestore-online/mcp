@@ -273,6 +273,14 @@ Brand tokens: var(--paper), var(--ink), var(--accent). Dark mode + Manrope/Fraun
         const kind = type ?? "standalone";
         // 1. Provision via the admin endpoint `fgs publish` uses. Pass
         //    creatorGithub so the registry records ownership (the update_files gate).
+        //
+        //    NOTE (CF Access future-proofing): this calls admin.freegamestore.online
+        //    DIRECTLY with the user's Bearer, which works only because FGS admin is
+        //    currently Bearer-gated (401 on bad token), not behind CF Access. If admin
+        //    is later put behind CF Access, this request will 302 at the edge BEFORE
+        //    the worker runs and create_game will break. At that point switch to the
+        //    FAS pattern: call a PUBLIC backend endpoint that service-binds to admin
+        //    (CF Access applies at the public edge, not to service bindings).
         const prov = (await adminPost(this.env.ADMIN_BASE, "/api/provision", token, {
           name: game_id,
           store: "games",
