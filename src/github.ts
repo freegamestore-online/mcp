@@ -118,14 +118,30 @@ export async function pushFiles(
     baseTree = parent?.tree?.sha;
   }
 
-  const treeItems: Array<{ path: string; mode: string; type: string; sha: string }> = [];
+  const treeItems: Array<{ path: string; mode: string; type: string; sha: string | null }> = [];
   for (const [path, f] of files) {
     const blob = await gh(token, `${base}/git/blobs`, "POST", { content: f.content, encoding: f.encoding });
     if (!blob?.sha) throw new Error(`blob create failed for ${path}: ${blob.message ?? blob.__status}`);
     treeItems.push({ path, mode: "100644", type: "blob", sha: blob.sha });
   }
 
-  const tree = await gh(token, `${base}/git/trees`, "POST", replaceTree ? { tree: treeItems } : { base_tree: baseTree, tree: treeItems });
+  // replaceTree: delete every existing file not in `files`, so the result is
+  // exactly `files`. We KEEP base_tree and stage `sha: null` deletions (omitting
+  // base_tree makes GitHub 404 create-tree against the just-made blobs). Used by
+  // the initial scaffold so a grid/cards/3d game doesn't inherit leftover files
+  // from the admin's canvas generate.
+  if (replaceTree && baseTree) {
+    const existing = await gh(token, `${base}/git/trees/${baseTree}?recursive=1`);
+    if (Array.isArray(existing?.tree)) {
+      for (const item of existing.tree) {
+        if (item.type === "blob" && !files.has(item.path)) {
+          treeItems.push({ path: item.path, mode: "100644", type: "blob", sha: null });
+        }
+      }
+    }
+  }
+
+  const tree = await gh(token, `${base}/git/trees`, "POST", { base_tree: baseTree, tree: treeItems });
   if (!tree?.sha) throw new Error(`tree create failed: ${tree.message ?? tree.__status}`);
 
   const commit = await gh(token, `${base}/git/commits`, "POST", {
