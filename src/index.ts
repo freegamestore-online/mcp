@@ -62,6 +62,16 @@ async function adminPost(adminBase: string, path: string, token: string, body: u
 
 const txt = (text: string) => ({ content: [{ type: "text" as const, text }] });
 
+// Scope VibeCode agent sessions to the caller. The agent worker keys its
+// Durable Object by the raw session id with no per-user namespacing, so without
+// this a passed/guessed session_id could reach another user's build session.
+// Force every session under the caller's login; users can only ever
+// create/read their own.
+function sessionPrefix(login?: string): string {
+  const u = (login ?? "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "anon";
+  return `mcp-${u}-`;
+}
+
 export interface McpProps extends Record<string, unknown> {
   login?: string; // GitHub login (decoded from the session token's `sub`)
   token?: string;
@@ -391,7 +401,15 @@ Brand tokens: var(--paper), var(--ink), var(--accent). Dark mode + Manrope/Fraun
           google: "gemini-2.0-flash",
           github: "gpt-4o",
         };
-        const sid = session_id ?? `mcp-${crypto.randomUUID().slice(0, 12)}`;
+        // Force the session under the caller's namespace: a passed session_id
+        // is honored only if already in the caller's namespace, else re-scoped —
+        // so you can't target another user's session id.
+        const prefix = sessionPrefix(this.props.login);
+        const sid = session_id
+          ? session_id.startsWith(prefix)
+            ? session_id
+            : prefix + session_id.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 40)
+          : prefix + crypto.randomUUID().slice(0, 12);
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 110_000); // cap; build continues server-side
         const phases: string[] = [];
@@ -453,7 +471,12 @@ Brand tokens: var(--paper), var(--ink), var(--accent). Dark mode + Manrope/Fraun
       { session_id: z.string().describe("The session_id returned by agent_build") },
       async ({ session_id }) => {
         if (!this.props.token) return txt("Not authenticated. Connect with an FGS session token.");
-        const res = await fetch(`${this.env.AGENT_BASE}/session/${session_id}/status`);
+        // Only let callers read sessions in their own namespace.
+        if (!session_id.startsWith(sessionPrefix(this.props.login)))
+          return txt("That session isn't one of yours — agent sessions are scoped to your account. Use the session_id returned by agent_build.");
+        const res = await fetch(`${this.env.AGENT_BASE}/session/${session_id}/status`, {
+          headers: { Authorization: `Bearer ${this.props.token}` },
+        });
         if (!res.ok) return txt(`Status fetch failed (${res.status}).`);
         const s = (await res.json()) as { appId?: string | null; appUrl?: string | null; deployStatus?: { phase?: string; error?: string } | null; messageCount?: number };
         const lines = [
