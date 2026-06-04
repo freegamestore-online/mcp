@@ -317,21 +317,7 @@ Brand tokens: var(--paper), var(--ink), var(--accent). Dark mode + Manrope/Fraun
           // a full-tree replace ensures a grid/cards/3d game contains ONLY the
           // chosen template (no leftover canvas files with unsubstituted APPNAME).
           //
-          // Retry: GitHub's template `generate` is async — pushing immediately
-          // after provision can 404 the create-tree before the new repo's git
-          // data has materialized. Retry a few times with backoff to ride it out.
-          let pushErr: unknown;
-          for (let attempt = 0; attempt < 5; attempt++) {
-            if (attempt > 0) await new Promise((r) => setTimeout(r, 2500));
-            try {
-              await pushFiles(this.env.GITHUB_ORG, game_id, this.env.GITHUB_TOKEN, files, `Initial ${game_id} — scaffolded via MCP (${tmpl})`, true);
-              pushErr = undefined;
-              break;
-            } catch (err) {
-              pushErr = err;
-            }
-          }
-          if (pushErr) throw pushErr;
+          await pushFiles(this.env.GITHUB_ORG, game_id, this.env.GITHUB_TOKEN, files, `Initial ${game_id} — scaffolded via MCP (${tmpl})`, true);
           return txt(
             `✅ Created **${game_id}** (${tmpl} template, ${kind}).\n` +
               `Live in ~1-2 min: https://${game_id}.${DOMAIN}\n` +

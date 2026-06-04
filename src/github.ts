@@ -125,24 +125,32 @@ export async function pushFiles(
     treeItems.push({ path, mode: "100644", type: "blob", sha: blob.sha });
   }
 
-  // replaceTree: delete every existing file not in `files`, so the result is
-  // exactly `files`. We KEEP base_tree and stage `sha: null` deletions (omitting
-  // base_tree makes GitHub 404 create-tree against the just-made blobs). Used by
-  // the initial scaffold so a grid/cards/3d game doesn't inherit leftover files
-  // from the admin's canvas generate.
-  if (replaceTree && baseTree) {
-    const existing = await gh(token, `${base}/git/trees/${baseTree}?recursive=1`);
-    if (Array.isArray(existing?.tree)) {
-      for (const item of existing.tree) {
-        if (item.type === "blob" && !files.has(item.path)) {
-          treeItems.push({ path: item.path, mode: "100644", type: "blob", sha: null });
+  // Create the tree, retrying on transient failure. Right after a template
+  // `generate` (the admin's provision), the new repo's git data takes ~10-20s to
+  // materialize — create-tree 404s in that window even though the blobs above
+  // succeeded. The blobs are created once; only the tree create is retried.
+  // replaceTree: also stage `sha: null` deletions for every existing path not in
+  // `files`, so the result is exactly `files` (a grid/cards/3d game doesn't
+  // inherit leftovers from the admin's canvas generate). base_tree is kept —
+  // omitting it makes create-tree 404 against the just-made blobs.
+  let tree: any;
+  for (let attempt = 0; attempt < 8; attempt++) {
+    if (attempt > 0) await new Promise((r) => setTimeout(r, 3000));
+    const items = [...treeItems];
+    if (replaceTree && baseTree) {
+      const existing = await gh(token, `${base}/git/trees/${baseTree}?recursive=1`);
+      if (Array.isArray(existing?.tree)) {
+        for (const item of existing.tree) {
+          if (item.type === "blob" && !files.has(item.path)) {
+            items.push({ path: item.path, mode: "100644", type: "blob", sha: null });
+          }
         }
       }
     }
+    tree = await gh(token, `${base}/git/trees`, "POST", { base_tree: baseTree, tree: items });
+    if (tree?.sha) break;
   }
-
-  const tree = await gh(token, `${base}/git/trees`, "POST", { base_tree: baseTree, tree: treeItems });
-  if (!tree?.sha) throw new Error(`tree create failed: ${tree.message ?? tree.__status}`);
+  if (!tree?.sha) throw new Error(`tree create failed: ${tree?.message ?? tree?.__status}`);
 
   const commit = await gh(token, `${base}/git/commits`, "POST", {
     message,
