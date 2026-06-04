@@ -185,9 +185,13 @@ export class FgsMcpAgent extends McpAgent<Env, unknown, McpProps> {
       "Get the FreeGameStore platform guide (SKILLS.md) for AI-assisted game development. Returns the full guide for how to build games on the platform.",
       {},
       async () => {
-        const res = await fetch(`https://${DOMAIN}/skills.md`);
-        if (!res.ok) return txt("Failed to fetch SKILLS.md");
-        return txt(await res.text());
+        // FGS currently serves SKILLS.md (uppercase) only; lowercase is a sibling
+        // alias on some deploys. Try both so this doesn't 404 on case.
+        for (const path of ["/SKILLS.md", "/skills.md"]) {
+          const res = await fetch(`https://${DOMAIN}${path}`);
+          if (res.ok) return txt(await res.text());
+        }
+        return txt("Failed to fetch SKILLS.md");
       },
     );
 
@@ -299,7 +303,10 @@ Brand tokens: var(--paper), var(--ink), var(--accent). Dark mode + Manrope/Fraun
         //    canvas generate, and applies grid/cards/3d when chosen.
         try {
           const files = await fetchTemplateFiles(this.env.GITHUB_ORG, `template-game-${tmpl}`, this.env.GITHUB_TOKEN, game_id);
-          await pushFiles(this.env.GITHUB_ORG, game_id, this.env.GITHUB_TOKEN, files, `Initial ${game_id} — scaffolded via MCP (${tmpl})`);
+          // replaceTree: the admin generates the repo from template-game-canvas;
+          // a full-tree replace ensures a grid/cards/3d game contains ONLY the
+          // chosen template (no leftover canvas files with unsubstituted APPNAME).
+          await pushFiles(this.env.GITHUB_ORG, game_id, this.env.GITHUB_TOKEN, files, `Initial ${game_id} — scaffolded via MCP (${tmpl})`, true);
           return txt(
             `✅ Created **${game_id}** (${tmpl} template, ${kind}).\n` +
               `Live in ~1-2 min: https://${game_id}.${DOMAIN}\n` +

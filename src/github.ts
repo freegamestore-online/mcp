@@ -83,14 +83,19 @@ export async function fetchTemplateFiles(
 }
 
 /** Push a set of files to org/repo's main branch as one commit. Handles both an
- *  empty repo (seeds it) and an existing one (preserves untouched files via
- *  base_tree). Returns the new commit sha. */
+ *  empty repo (seeds it) and an existing one. With `replaceTree` false (default)
+ *  it preserves untouched files via base_tree — the improve loop (update_files).
+ *  With `replaceTree` true it omits base_tree, so the commit's tree contains ONLY
+ *  the provided files — used by the initial scaffold so a chosen template (grid/
+ *  cards/3d) doesn't inherit leftover files from the admin's canvas generate.
+ *  Returns the new commit sha. */
 export async function pushFiles(
   org: string,
   repo: string,
   token: string,
   files: Map<string, RepoFile>,
   message: string,
+  replaceTree = false,
 ): Promise<string> {
   const base = `https://api.github.com/repos/${org}/${repo}`;
 
@@ -120,7 +125,7 @@ export async function pushFiles(
     treeItems.push({ path, mode: "100644", type: "blob", sha: blob.sha });
   }
 
-  const tree = await gh(token, `${base}/git/trees`, "POST", { base_tree: baseTree, tree: treeItems });
+  const tree = await gh(token, `${base}/git/trees`, "POST", replaceTree ? { tree: treeItems } : { base_tree: baseTree, tree: treeItems });
   if (!tree?.sha) throw new Error(`tree create failed: ${tree.message ?? tree.__status}`);
 
   const commit = await gh(token, `${base}/git/commits`, "POST", {
