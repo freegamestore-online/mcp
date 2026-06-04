@@ -1,0 +1,30 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.freegamestore-online/mcp",
+  "description": "Build, publish, and improve games on FreeGameStore from your editor: create_game/update_files (your model authors) or agent_build (the VibeCode agent authors), plus deploy status, SDK docs, and game info.",
+  "repository": {
+    "url": "https://github.com/freegamestore-online/mcp",
+    "source": "github"
+  },
+  "version": "0.1.0",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "https://mcp.freegamestore.online/mcp"
+    }
+  ],
+  "tools": [
+    { "name": "create_game", "description": "Provision repo+R2 hosting+listing, scaffold a template, push → live at <id>.freegamestore.online" },
+    { "name": "update_files", "description": "Write/overwrite files in a game you own → auto-deploys (improve loop)" },
+    { "name": "read_file", "description": "Read one file from a game's repo" },
+    { "name": "list_files", "description": "List files in a game's repo" },
+    { "name": "agent_build", "description": "Hand a prompt to the VibeCode agent — it writes the code AND deploys (bring-your-own AI key)" },
+    { "name": "agent_status", "description": "Poll a VibeCode agent build session — game id, deploy phase, live URL" },
+    { "name": "list_games", "description": "List your published games (requires FGS session token)" },
+    { "name": "deploy_status", "description": "Check GitHub Actions deploy status for any game (last 5 runs)" },
+    { "name": "game_info", "description": "Get live URL, repo, store listing, and up/down status for any game" },
+    { "name": "game_logs", "description": "Latest deploy/build logs for a game" },
+    { "name": "platform_guide", "description": "Fetch the full SKILLS.md platform guide" },
+    { "name": "sdk_reference", "description": "Quick @freegamestore/games SDK reference" }
+  ]
+}

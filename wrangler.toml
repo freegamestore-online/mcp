@@ -1,0 +1,25 @@
+name = "freegamestore-mcp"
+main = "src/index.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+ADMIN_BASE = "https://admin.freegamestore.online"
+AGENT_BASE = "https://agent.freegamestore.online"
+GITHUB_ORG = "freegamestore-online"
+STORE_REPO = "freegamestore"
+
+# More specific than the host worker's `*.freegamestore.online/*` wildcard route,
+# so this wins for the mcp subdomain. DNS is covered by the zone's wildcard record.
+[[routes]]
+pattern = "mcp.freegamestore.online/*"
+zone_name = "freegamestore.online"
+
+[durable_objects]
+bindings = [
+  { name = "MCP_OBJECT", class_name = "FgsMcpAgent" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["FgsMcpAgent"]
