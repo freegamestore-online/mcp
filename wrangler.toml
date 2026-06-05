@@ -8,6 +8,7 @@ API_BASE = "https://admin.freegamestore.online"
 GITHUB_ORG = "freegamestore-online"
 AGENT_BASE = "https://agent.freegamestore.online"
 LEADERBOARD_BASE = "https://freegamestore-leaderboard.serge-the-dev.workers.dev"
+STORE_REPO = "freegamestore"
 
 [[routes]]
 pattern = "mcp.freegamestore.online/*"

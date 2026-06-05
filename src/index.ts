@@ -1,7 +1,7 @@
 import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { fetchTemplateFiles, listRepoFiles, pushFiles, readRepoFile, type RepoFile, textToB64 } from "./github.js";
+import { fetchTemplateFiles, listRepoFiles, pushFiles, readRegistryGames, readRepoFile, type RepoFile, textToB64 } from "./github.js";
 import { handleOAuthRoute, resolveOAuthToken } from "./oauth-provider.js";
 
 interface Env {
@@ -9,6 +9,7 @@ interface Env {
   GITHUB_ORG: string;
   AGENT_BASE: string;
   LEADERBOARD_BASE: string;
+  STORE_REPO: string;
   MCP_OBJECT: DurableObjectNamespace;
   GITHUB_TOKEN?: string;
   GITHUB_CLIENT_ID?: string;
@@ -112,6 +113,15 @@ export class FgsMcpAgent extends McpAgent<Env, unknown, McpProps> {
     } catch {
       /* in-memory set is enough for the immediately-following tool call */
     }
+  }
+
+  /** Ownership gate: does the session user own this published game?
+   *  FGS has no /v1/apps/mine — registry.json's creatorGithub is the record. */
+  private async ownsGame(gameId: string): Promise<boolean> {
+    const login = this.props.userId;
+    if (!login) return false;
+    const games = await readRegistryGames(this.env.GITHUB_ORG, this.env.STORE_REPO, this.env.GITHUB_TOKEN);
+    return games.some((g) => g.id === gameId && g.creatorGithub === login);
   }
 
   async init() {
@@ -249,10 +259,11 @@ export class FgsMcpAgent extends McpAgent<Env, unknown, McpProps> {
       "Get the FreeGameStore platform guide for AI-assisted game development.",
       {},
       async () => {
-        const res = await fetch("https://freegamestore.online/skills.md");
-        if (!res.ok) return txt("No platform guide available at freegamestore.online/skills.md.");
-        const text = await res.text();
-        return txt(text);
+        for (const path of ["/SKILLS.md", "/skills.md"]) {
+          const res = await fetch(`https://freegamestore.online${path}`);
+          if (res.ok) return txt(await res.text());
+        }
+        return txt("Failed to fetch SKILLS.md from freegamestore.online.");
       }
     );
 
@@ -371,7 +382,7 @@ GameShell sets up the viewport lock, theme provider, and sound context.`,
         // 2. Scaffold: fetch template, substitute, push -> triggers deploy
         try {
           const files = await fetchTemplateFiles(this.env.GITHUB_ORG, templateRepo, this.env.GITHUB_TOKEN, game_id);
-          await pushFiles(this.env.GITHUB_ORG, game_id, this.env.GITHUB_TOKEN, files, `Initial ${game_id} — scaffolded via MCP (${templateRepo})`);
+          await pushFiles(this.env.GITHUB_ORG, game_id, this.env.GITHUB_TOKEN, files, `Initial ${game_id} — scaffolded via MCP (${templateRepo})`, true);
           return txt(
             `Created **${name}** (${game_id}) using ${templateRepo}.\n` +
             `Live in ~1-2 min: https://${game_id}.freegamestore.online\n` +
@@ -424,6 +435,8 @@ GameShell sets up the viewport lock, theme provider, and sound context.`,
         if (!token) return txt("Not authenticated. Connect with a FGS session token.");
         if (!this.env.GITHUB_TOKEN) return txt("Write tools are disabled (server missing GITHUB_TOKEN).");
         if (!files?.length) return txt("No files provided.");
+        if (!(await this.ownsGame(game_id)))
+          return txt(`You don't own "${game_id}" (or it isn't registered to your login). Only the creator can update it.`);
         const map = new Map<string, RepoFile>(
           files.map((f) => [f.path, { content: textToB64(f.content), encoding: "base64" as const }]),
         );
@@ -439,22 +452,24 @@ GameShell sets up the viewport lock, theme provider, and sound context.`,
     // -- agent_build (delegate code-gen to the platform's VibeCode agent) --
     this.server.tool(
       "agent_build",
-      "Hand a natural-language prompt to the FreeGameStore VibeCode AGENT — the platform's own AI writes the code AND deploys it. Uses your stored AI key. Long-running; it builds in the background. Returns the session_id — poll agent_status to watch it and get the live URL.",
+      "Hand a natural-language prompt to the FreeGameStore VibeCode AGENT — the platform's own AI writes the code AND deploys it. FGS agent is bring-your-own-key: pass your AI provider api_key. Long-running; builds in the background. Returns session_id — poll agent_status for progress.",
       {
         prompt: z.string().describe("What to build, in plain English. Include a desired game id."),
-        provider: z.enum(["anthropic", "openai", "openrouter", "google"]).optional().describe("Which AI provider to use (default anthropic)"),
+        api_key: z.string().describe("Your AI provider API key (BYO — FGS agent has no key vault). Spent against your own account."),
+        provider: z.enum(["anthropic", "openai", "google", "github"]).optional().describe("AI provider for your key (default anthropic)"),
         model: z.string().optional().describe("Model id"),
         session_id: z.string().optional().describe("Continue an existing build session"),
       },
-      async ({ prompt, provider, model, session_id }) => {
+      async ({ prompt, api_key, provider, model, session_id }) => {
         const token = this.props.token;
         if (!token) return txt("Not authenticated. Connect with a FGS session token.");
+        if (!api_key) return txt("agent_build requires an api_key — FGS agent is bring-your-own-key.");
         const prov = provider ?? "anthropic";
         const defaultModel: Record<string, string> = {
           anthropic: "claude-sonnet-4-6",
           openai: "gpt-4o",
-          openrouter: "anthropic/claude-sonnet-4",
           google: "gemini-2.0-flash",
+          github: "gpt-4o",
         };
         const prefix = sessionPrefix(this.props.userId);
         const sid = session_id
@@ -471,7 +486,7 @@ GameShell sets up the viewport lock, theme provider, and sound context.`,
           const res = await fetch(`${this.env.AGENT_BASE}/session/${sid}/chat`, {
             method: "POST",
             headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ message: prompt, aiConfig: { provider: prov, model: model ?? defaultModel[prov] ?? "claude-sonnet-4-6" } }),
+            body: JSON.stringify({ message: prompt, aiConfig: { provider: prov, model: model ?? defaultModel[prov] ?? "claude-sonnet-4-6", apiKey: api_key } }),
             signal: ctrl.signal,
           });
           if (!res.ok || !res.body) {
@@ -492,8 +507,12 @@ GameShell sets up the viewport lock, theme provider, and sound context.`,
               if (!line) continue;
               try {
                 const ev = JSON.parse(line.slice(6));
-                if (ev.type === "deploy" && ev.data) {
-                  try { const d = JSON.parse(ev.data); if (d.phase) phases.push(d.phase); if (d.appId) gameId = d.appId; } catch { /* */ }
+                if ((ev.type === "deploy" || ev.type === "deploy_status") && ev.data) {
+                  try {
+                    const d = typeof ev.data === "string" ? JSON.parse(ev.data) : ev.data;
+                    if (d.phase) phases.push(d.phase);
+                    if (d.appId) gameId = d.appId;
+                  } catch { /* */ }
                 }
                 if (ev.appId) gameId = ev.appId;
               } catch { /* */ }
