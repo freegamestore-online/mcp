@@ -24,16 +24,12 @@ async function getDeployStatus(org: string, gameId: string) {
     { headers: { Accept: "application/vnd.github+json", "User-Agent": "freegamestore-mcp" } }
   );
   if (!res.ok) return { error: `GitHub API ${res.status}` };
-  const data = (await res.json()) as {
-    workflow_runs: Array<{
-      name: string;
-      conclusion: string | null;
-      status: string;
-      updated_at: string;
-      html_url: string;
-      head_sha: string;
-    }>;
-  };
+  let data: { workflow_runs?: Array<{ name: string; conclusion: string | null; status: string; updated_at: string; html_url: string; head_sha: string }> };
+  try {
+    data = (await res.json()) as typeof data;
+  } catch {
+    return { error: "GitHub API returned invalid JSON" };
+  }
   return (data.workflow_runs ?? []).map((r) => ({
     name: r.name,
     status: r.conclusion ?? r.status,
@@ -262,6 +258,7 @@ export class FgsMcpAgent extends McpAgent<Env, unknown, McpProps> {
         for (const path of ["/SKILLS.md", "/skills.md"]) {
           const res = await fetch(`https://freegamestore.online${path}`);
           if (res.ok) return txt(await res.text());
+          await res.body?.cancel();
         }
         return txt("Failed to fetch SKILLS.md from freegamestore.online.");
       }
@@ -552,7 +549,12 @@ GameShell sets up the viewport lock, theme provider, and sound context.`,
           headers: { Authorization: `Bearer ${token}` },
         });
         if (!res.ok) return txt(`Status fetch failed (${res.status}).`);
-        const s = (await res.json()) as { appId?: string | null; appUrl?: string | null; deployStatus?: { phase?: string; error?: string } | null; messageCount?: number };
+        let s: { appId?: string | null; appUrl?: string | null; deployStatus?: { phase?: string; error?: string } | null; messageCount?: number };
+        try {
+          s = (await res.json()) as typeof s;
+        } catch {
+          return txt("Agent status returned invalid JSON.");
+        }
         const lines = [
           `Session **${session_id}**`,
           `Game: ${s.appId ?? "(not deployed yet)"}`,

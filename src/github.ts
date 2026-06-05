@@ -94,11 +94,14 @@ export async function readRegistryGames(
   }
 }
 
+async function sleep(ms: number) { return new Promise((r) => setTimeout(r, ms)); }
+
 /** Push a set of files to org/repo's main branch as one commit. Handles both an
  *  empty repo (seeds it) and an existing one (preserves untouched files via
  *  base_tree). When replaceTree is true, omits base_tree so only the provided
  *  files exist (clean scaffold — no leftover files from a different template).
- *  Returns the new commit sha. */
+ *  Retries up to 3 times with backoff to ride out post-template-generate
+ *  propagation delays on GitHub. Returns the new commit sha. */
 export async function pushFiles(
   org: string,
   repo: string,
@@ -106,6 +109,28 @@ export async function pushFiles(
   files: Map<string, RepoFile>,
   message: string,
   replaceTree = false,
+): Promise<string> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await pushFilesOnce(org, repo, token, files, message, replaceTree);
+    } catch (e) {
+      if (attempt < 2) {
+        await sleep(2000 * (attempt + 1));
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error("pushFiles: unreachable");
+}
+
+async function pushFilesOnce(
+  org: string,
+  repo: string,
+  token: string,
+  files: Map<string, RepoFile>,
+  message: string,
+  replaceTree: boolean,
 ): Promise<string> {
   const base = `https://api.github.com/repos/${org}/${repo}`;
 
