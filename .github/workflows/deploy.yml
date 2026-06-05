@@ -13,18 +13,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # npm (not pnpm): @modelcontextprotocol/sdk + zod resolve only transitively
-      # via `agents`, and only npm's flat node_modules lets tsc/wrangler find them.
       - run: npm install
       - run: npx wrangler deploy
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-      # Set the worker's GITHUB_TOKEN (org token, contents:write + workflow) so the
-      # write tools work. Runs after deploy (the worker must exist). GH_ORG_TOKEN is
-      # the repo secret; GITHUB_TOKEN is the worker secret (separate namespaces).
-      - run: printf '%s' "$GH_ORG_TOKEN" | npx wrangler secret put GITHUB_TOKEN
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          GH_ORG_TOKEN: ${{ secrets.GH_ORG_TOKEN }}
