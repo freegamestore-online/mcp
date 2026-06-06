@@ -268,75 +268,87 @@ export class FgsMcpAgent extends McpAgent<Env, unknown, McpProps> {
     this.server.tool(
       "sdk_reference",
       "Quick reference for @freegamestore/games SDK — imports, features, and usage patterns for auth, leaderboard, sound, and UI components.",
-      { feature: z.enum(["all", "auth", "leaderboard", "sound", "ui", "shell"]).optional().describe("Specific feature, or 'all'") },
+      { feature: z.enum(["all", "shell", "auth", "leaderboard", "sound", "ui"]).optional().describe("Specific feature, or 'all'") },
       async ({ feature }) => {
         const sections: Record<string, string> = {
+          shell: `## GameShell + GameTopbar (required wrapper)
+\`\`\`tsx
+import { GameShell, GameTopbar, GameAuth } from '@freegamestore/games'
+
+<GameShell topbar={
+  <GameTopbar
+    title="My Game"
+    score={42}                           // shorthand for a single "Score" stat
+    stats={[                             // or pass custom stats array
+      { label: "SCORE", value: score, accent: true },
+      { label: "BEST", value: best },
+    ]}
+    actions={<GameAuth />}               // right-side slot (sign-in button)
+    rules={<div>How to play...</div>}    // info button -> fullscreen overlay
+    onRestart={restart}                  // restart icon
+    onPlayPause={toggle} paused={isPaused} // play/pause for real-time games
+  />
+}>
+  <YourGameBoard />
+</GameShell>
+\`\`\`
+GameShell: fixed 100svh layout, SoundProvider context, overflow hidden. GameTopbar: brand-consistent bar (don't build your own).`,
           auth: `## Auth
 \`\`\`tsx
-import { useAuth } from '@freegamestore/games'
+import { GameAuth, useAuth } from '@freegamestore/games'
+
+<GameAuth />  // drop-in sign-in / avatar button
+
 const { user, loading, signIn, signOut } = useAuth()
-// user: { id, name, avatar } | null
-// signIn() — redirects to auth.freegamestore.online (GitHub or Google OAuth)
-// signOut() — clears session
+// user: { id: string, name: string, avatar: string } | null
+// signIn() redirects to auth.freegamestore.online (GitHub OAuth)
 \`\`\``,
           leaderboard: `## Leaderboard
 \`\`\`tsx
 import { useLeaderboard, Leaderboard } from '@freegamestore/games'
 
-// Hook:
-const { top, recent, submitScore, refresh } = useLeaderboard('my-game')
-await submitScore(1500)
+const { topScores, recentScores, submitScore, loading, refresh } = useLeaderboard('my-game')
+await submitScore(1500)  // signed-in users get their name from the auth cookie
 
-// Component (drop-in UI):
-<Leaderboard gameId="my-game" />
-\`\`\`
-Backed by D1 at freegamestore-leaderboard.serge-the-dev.workers.dev.`,
+// Drop-in board UI:
+<Leaderboard topScores={topScores} recentScores={recentScores} loading={loading} />
+\`\`\``,
           sound: `## Sound
 \`\`\`tsx
 import { useSound, useGameSounds } from '@freegamestore/games'
 
-// Low-level:
-const { play, stop } = useSound()
-play('/sounds/click.mp3')
+// Mute state (controlled by topbar toggle):
+const { muted, toggle } = useSound()
 
-// Pre-configured game sounds:
+// Synthesized Web Audio effects (zero audio files, respect mute automatically):
 const sounds = useGameSounds()
-sounds.move()
-sounds.win()
-sounds.lose()
-\`\`\``,
+sounds.playMove()      // click/tap — piece moved, card flipped
+sounds.playScore()     // positive ding — scored, matched
+sounds.playError()     // negative buzz — wrong, hit obstacle
+sounds.playDrop()      // thud — block landed
+sounds.playClear()     // sweep — line cleared, combo
+sounds.playLevelUp()   // ascending arpeggio — level up
+sounds.playGameOver()  // descending tones — game over
+sounds.playTick()      // countdown tick
+\`\`\`
+IMPORTANT: useGameSounds() must be called inside GameShell (needs SoundProvider context). Put game logic in a child component of GameShell.`,
           ui: `## UI Components
 \`\`\`tsx
 import {
-  GameButton,
-  GameConfirm,
-  GameModal,
-  GameOverScreen,
-  GameTextSizeToggle,
-  GameThemeToggle,
-  GameTopbar,
-  GameAuth,
+  GameButton, GameConfirm, GameModal, GameOverScreen,
+  GameTextSizeToggle, GameThemeToggle,
 } from '@freegamestore/games'
 
-<GameButton onClick={start}>Play</GameButton>
-<GameConfirm onConfirm={reset} title="Restart?">Are you sure?</GameConfirm>
-<GameModal open={show} onClose={close} title="Settings">...</GameModal>
-<GameOverScreen score={1500} onRestart={restart} />
-<GameTopbar title="Chess" />
-<GameAuth />                    {/* Sign-in button + avatar */}
-<GameTextSizeToggle />          {/* A/A size toggle */}
-<GameThemeToggle />             {/* Light/dark toggle */}
-\`\`\``,
-          shell: `## GameShell (app wrapper)
-\`\`\`tsx
-import { GameShell } from '@freegamestore/games'
-
-// Full-screen game wrapper (100svh, no scrolling, themed):
-<GameShell>
-  <YourGame />
-</GameShell>
+<GameButton variant="primary" size="md" onClick={start}>Play</GameButton>
+<GameButton variant="ghost" size="sm" onClick={skip}>Skip</GameButton>
+<GameConfirm open={show} title="Restart?" message="Progress will be lost"
+  onConfirm={restart} onCancel={close} variant="danger" />
+<GameModal open={settingsOpen} onClose={close} title="Settings">...</GameModal>
+<GameOverScreen score={score} highScore={best} onPlayAgain={restart} />
+<GameTextSizeToggle />
+<GameThemeToggle />
 \`\`\`
-GameShell sets up the viewport lock, theme provider, and sound context.`,
+Variants: primary | secondary | ghost | danger. Sizes: sm | md | lg.`,
         };
 
         const selected = feature === "all" || !feature
