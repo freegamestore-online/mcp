@@ -60,9 +60,10 @@ async function fgsApi(apiBase: string, path: string, token?: string) {
 
 // POST to the FGS admin
 async function fgsPost(apiBase: string, path: string, token: string, body: unknown) {
+  // X-FGS-Token survives worker-to-worker (Cloudflare strips Authorization on those hops).
   const res = await fetch(`${apiBase}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", "X-FGS-Token": token, Authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   });
   const text = await res.text();
@@ -597,7 +598,7 @@ Variants: primary | secondary | ghost | danger. Sizes: sm | md | lg.`,
       async () => {
         const token = this.props.token;
         if (!token) return txt("Not authenticated. Connect with a FGS session token.");
-        const res = await fetch(`${this.env.AGENT_BASE}/sessions`, { headers: { Authorization: `Bearer ${token}` } });
+        const res = await fetch(`${this.env.AGENT_BASE}/sessions`, { headers: { "X-FGS-Token": token } });
         if (!res.ok) return txt(`Could not list sessions (${res.status}). Your VibeCode session list isn't reachable yet — use session_history with a session id (from a console.freegamestore.online/create/<id> URL) to read a specific chat.`);
         let data: { sessions?: Array<{ id: string; name: string; gameId?: string; deployed?: boolean; createdAt?: string }> };
         try { data = (await res.json()) as typeof data; } catch { return txt("Sessions returned invalid JSON."); }
