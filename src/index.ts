@@ -2,19 +2,21 @@ import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { fetchTemplateFiles, listRepoFiles, pushFiles, readRegistryGames, readRepoFile, type RepoFile, textToB64 } from "./github.js";
-import { handleOAuthRoute, resolveOAuthToken, unauthorizedChallenge } from "./oauth-provider.js";
+import { OAuthProvider, type OAuthHelpers } from "@cloudflare/workers-oauth-provider";
+import { WorkerEntrypoint } from "cloudflare:workers";
+import authHandler from "./auth-handler.js";
 
 interface Env {
   API_BASE: string;
   GITHUB_ORG: string;
   AGENT_BASE: string;
+  AUTH_BASE: string;
   LEADERBOARD_BASE: string;
   STORE_REPO: string;
   MCP_OBJECT: DurableObjectNamespace;
   GITHUB_TOKEN?: string;
-  GITHUB_CLIENT_ID?: string;
-  GITHUB_CLIENT_SECRET?: string;
-  OAUTH_KV?: KVNamespace;
+  OAUTH_KV: KVNamespace;
+  OAUTH_PROVIDER: OAuthHelpers;
 }
 
 // GitHub Actions API (public repos, no auth needed)
@@ -76,19 +78,6 @@ const txt = (text: string) => ({ content: [{ type: "text" as const, text }] });
 function sessionPrefix(userId?: string): string {
   const u = (userId ?? "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "anon";
   return `mcp-${u}-`;
-}
-
-// Decode userId from FGS admin JWT (3-part: header.payload.sig)
-function decodeUid(token: string): string | undefined {
-  try {
-    const parts = token.split(".");
-    if (parts.length !== 3) return undefined;
-    const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
-    const json = JSON.parse(atob(padded + "===".slice(0, (4 - padded.length % 4) % 4)));
-    return typeof json.sub === "string" ? json.sub : undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 export interface McpProps extends Record<string, unknown> {
@@ -584,74 +573,37 @@ Variants: primary | secondary | ghost | danger. Sizes: sm | md | lg.`,
 // FGS admin sessions are 3-part JWTs (header.payload.sig), HMAC-SHA256 signed
 // with the admin's own SESSION_SIGNING_KEY. We don't verify locally — the
 // admin API verifies on every call. We just decode the payload for userId context.
-async function authenticateRequest(request: Request, env: Env): Promise<{ userId?: string; token?: string }> {
-  const auth = request.headers.get("Authorization") ?? "";
-  if (!auth.startsWith("Bearer ")) return {};
-  let token = auth.slice(7).trim();
-  if (!token) return {};
-
-  // Resolve OAuth access token -> underlying FGS admin session
-  if (env.OAUTH_KV) {
-    const fgsSession = await resolveOAuthToken(token, env.OAUTH_KV);
-    if (fgsSession) token = fgsSession;
+/**
+ * MCP API handler. OAuthProvider authenticates the request and exposes the
+ * caller's props on ctx.props. Because agents@0.0.74's serve() drops ctx.props
+ * (see CLAUDE.md), we RPC them into the target DO via setAuth before dispatch.
+ */
+export class FgsApiHandler extends WorkerEntrypoint<Env> {
+  async fetch(request: Request): Promise<Response> {
+    const props = (this.ctx as unknown as { props?: McpProps }).props;
+    const sessionId = request.headers.get("mcp-session-id");
+    if (props?.token && sessionId) {
+      try {
+        const id = this.env.MCP_OBJECT.idFromName(`streamable-http:${sessionId}`);
+        const stub = this.env.MCP_OBJECT.get(id) as unknown as { setAuth(p: McpProps): Promise<void> };
+        await stub.setAuth(props);
+      } catch {
+        /* best effort */
+      }
+    }
+    return FgsMcpAgent.serve("/mcp").fetch(request, this.env, this.ctx);
   }
-
-  return { userId: decodeUid(token), token };
 }
 
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
-    const url = new URL(request.url);
-
-    // OAuth 2.1 routes (discovery, registration, authorize, token)
-    if (env.OAUTH_KV && env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET) {
-      const oauthRes = await handleOAuthRoute(request, {
-        issuer: `${url.protocol}//${url.host}`,
-        adminBase: env.API_BASE,
-        kv: env.OAUTH_KV,
-        githubClientId: env.GITHUB_CLIENT_ID,
-        githubClientSecret: env.GITHUB_CLIENT_SECRET,
-      });
-      if (oauthRes) return oauthRes;
-    }
-
-    if (url.pathname === "/" || url.pathname === "") {
-      return new Response(
-        "FreeGameStore MCP Server\n\n" +
-          "Connect: npx mcp-remote https://mcp.freegamestore.online/mcp\n\n" +
-          "Build it yourself (your model writes the code): create_game, update_files, read_file, list_files\n" +
-          "Let the platform agent build it (you just prompt): agent_build, agent_status\n" +
-          "Info: list_games, deploy_status, game_info, game_quality, leaderboard, platform_guide, sdk_reference\n\n" +
-          "Two ways to build, both from your editor:\n" +
-          "  1. create_game -> read_file/update_files to improve -> deploy_status.\n" +
-          "  2. agent_build('make a X game and deploy it') -> the VibeCode agent writes + ships it -> agent_status.\n\n" +
-          "Auth: OAuth 2.1 (automatic via mcp-remote) or Bearer <FGS admin session token>.\n",
-        { headers: { "content-type": "text/plain" } }
-      );
-    }
-
-    // Authenticate and inject the session into the target MCP DO before dispatch.
-    if (url.pathname.startsWith("/mcp")) {
-      const auth = await authenticateRequest(request, env);
-      // No token + OAuth configured → return a 401 challenge so mcp-remote starts
-      // the browser sign-in flow (like PAGS). The MCP stays closed without auth.
-      const oauthConfigured = !!(env.OAUTH_KV && env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
-      if (!auth.token && oauthConfigured) {
-        return unauthorizedChallenge(`${url.protocol}//${url.host}`);
-      }
-      const sessionId = request.headers.get("mcp-session-id");
-      if (auth.token && sessionId) {
-        try {
-          const id = env.MCP_OBJECT.idFromName(`streamable-http:${sessionId}`);
-          const stub = env.MCP_OBJECT.get(id) as unknown as { setAuth(p: McpProps): Promise<void> };
-          await stub.setAuth({ userId: auth.userId, token: auth.token });
-        } catch {
-          /* best effort */
-        }
-      }
-      return FgsMcpAgent.serve("/mcp").fetch(request, env, ctx);
-    }
-
-    return FgsMcpAgent.serve("/mcp").fetch(request, env, ctx);
-  },
-};
+// Best-practice MCP auth via @cloudflare/workers-oauth-provider: it handles
+// /token, /register, discovery metadata, the 401 challenge, PKCE, and
+// audience-bound tokens. Sign-in is delegated to the auth worker (auth-handler.ts),
+// so the MCP needs no GitHub app of its own.
+export default new OAuthProvider({
+  apiRoute: "/mcp",
+  apiHandler: FgsApiHandler as never,
+  defaultHandler: authHandler as never,
+  authorizeEndpoint: "/authorize",
+  tokenEndpoint: "/token",
+  clientRegistrationEndpoint: "/register",
+});
