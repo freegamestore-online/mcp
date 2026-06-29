@@ -25,6 +25,12 @@ zone_name = "freegamestore.online"
 binding = "OAUTH_KV"
 id = "c649c4239dbd4250bc1e6507cfb8be14"
 
+# Verify fgs_token signatures during the OAuth callback (service binding avoids
+# the same-zone public-hostname loopback that returns CF 522).
+[[services]]
+binding = "AUTH"
+service = "freegamestore-auth"
+
 [durable_objects]
 bindings = [
   { name = "MCP_OBJECT", class_name = "FgsMcpAgent" }

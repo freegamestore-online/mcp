@@ -22,6 +22,7 @@ interface Env {
   OAUTH_PROVIDER: OAuthHelpers;
   OAUTH_KV: KVNamespace;
   AUTH_BASE: string; // e.g. https://auth.freegamestore.online
+  AUTH: Fetcher; // service binding to the auth worker (verify fgs_token via /me)
 }
 
 function getCookie(request: Request, name: string): string | null {
@@ -81,6 +82,13 @@ export default {
 
       const fgsToken = getCookie(request, "fgs_token");
       if (!fgsToken) return new Response("sign-in did not complete (no session cookie)", { status: 401 });
+
+      // SECURITY: verify the token's signature via the auth worker BEFORE trusting
+      // any claim from it. decodeLogin() is an unsigned read — without this, a forged
+      // fgs_token cookie could set props.userId/login to any GitHub user and bypass
+      // the ownership gate. Service binding avoids the same-zone loopback (CF 522).
+      const verify = await env.AUTH.fetch("https://auth.freegamestore.online/me", { headers: { "X-FGS-Token": fgsToken } });
+      if (!verify.ok) return new Response("invalid or expired session token", { status: 401 });
       const login = decodeLogin(fgsToken);
 
       const oauthReqInfo = JSON.parse(raw);
