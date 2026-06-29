@@ -92,6 +92,27 @@ export async function resolveOAuthToken(
   return kv.get(`token:${bearer}`);
 }
 
+/**
+ * 401 challenge for unauthenticated requests. The `WWW-Authenticate` header
+ * points clients (mcp-remote) at the protected-resource metadata, which is what
+ * triggers the OAuth browser sign-in flow. Without this, clients have no signal
+ * to authenticate and just see a "not authenticated" tool error.
+ */
+export function unauthorizedChallenge(issuer: string): Response {
+  const metadata = `${issuer}/.well-known/oauth-protected-resource/mcp`;
+  return new Response(
+    JSON.stringify({ error: "unauthorized", error_description: "Sign in required to use the FreeGameStore MCP." }),
+    {
+      status: 401,
+      headers: {
+        "Content-Type": "application/json",
+        "WWW-Authenticate": `Bearer resource_metadata="${metadata}"`,
+        "Access-Control-Allow-Origin": "*",
+      },
+    },
+  );
+}
+
 // -- Internals --
 
 function json(data: unknown, status = 200): Response {

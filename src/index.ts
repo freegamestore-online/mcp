@@ -2,7 +2,7 @@ import { McpAgent } from "agents/mcp";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { fetchTemplateFiles, listRepoFiles, pushFiles, readRegistryGames, readRepoFile, type RepoFile, textToB64 } from "./github.js";
-import { handleOAuthRoute, resolveOAuthToken } from "./oauth-provider.js";
+import { handleOAuthRoute, resolveOAuthToken, unauthorizedChallenge } from "./oauth-provider.js";
 
 interface Env {
   API_BASE: string;
@@ -633,6 +633,12 @@ export default {
     // Authenticate and inject the session into the target MCP DO before dispatch.
     if (url.pathname.startsWith("/mcp")) {
       const auth = await authenticateRequest(request, env);
+      // No token + OAuth configured → return a 401 challenge so mcp-remote starts
+      // the browser sign-in flow (like PAGS). The MCP stays closed without auth.
+      const oauthConfigured = !!(env.OAUTH_KV && env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
+      if (!auth.token && oauthConfigured) {
+        return unauthorizedChallenge(`${url.protocol}//${url.host}`);
+      }
       const sessionId = request.headers.get("mcp-session-id");
       if (auth.token && sessionId) {
         try {
