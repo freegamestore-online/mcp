@@ -566,6 +566,55 @@ Variants: primary | secondary | ghost | danger. Sizes: sm | md | lg.`,
         return txt(lines.join("\n"));
       },
     );
+
+    // -- list_sessions (your VibeCode sessions from the web console) --
+    this.server.tool(
+      "list_sessions",
+      "List YOUR VibeCode sessions from the web console — title, game, last updated. These are the chats where you built games with the platform's AI. Use session_history to read a transcript.",
+      {},
+      async () => {
+        const token = this.props.token;
+        if (!token) return txt("Not authenticated. Connect with a FGS session token.");
+        const res = await fetch(`${this.env.AGENT_BASE}/sessions`, { headers: { Authorization: `Bearer ${token}` } });
+        if (!res.ok) return txt(`Could not list sessions (${res.status}).`);
+        let data: { sessions?: Array<{ id: string; name: string; gameId?: string; deployed?: boolean; createdAt?: string }> };
+        try { data = (await res.json()) as typeof data; } catch { return txt("Sessions returned invalid JSON."); }
+        const sessions = data.sessions ?? [];
+        if (!sessions.length) {
+          return txt("No VibeCode sessions found server-side yet. Open console.freegamestore.online once while signed in to sync your existing sessions, then try again. (Old sessions live only in that browser's storage until synced.) You can also read any session directly with session_history if you have its id.");
+        }
+        const lines = sessions.map((s, i) =>
+          `${i + 1}. **${s.name || "Untitled"}** — \`${s.id}\`${s.gameId ? ` · game: ${s.gameId}` : ""}${s.deployed ? " · deployed" : ""}${s.createdAt ? ` · ${s.createdAt}` : ""}`,
+        );
+        return txt(`${sessions.length} VibeCode session(s), newest first:\n\n${lines.join("\n")}\n\nUse session_history with a session id to read the chat.`);
+      },
+    );
+
+    // -- session_history (read a VibeCode chat transcript) --
+    this.server.tool(
+      "session_history",
+      "Read the full chat transcript of a VibeCode session by id (from list_sessions, or a console.freegamestore.online/create/<id> URL) — the conversation between you and the platform's AI game builder.",
+      { session_id: z.string().describe("VibeCode session id") },
+      async ({ session_id }) => {
+        const res = await fetch(`${this.env.AGENT_BASE}/session/${encodeURIComponent(session_id)}/history`);
+        if (!res.ok) return txt(`Could not fetch history (${res.status}).`);
+        let data: { messages?: Array<{ role: string; content?: string; toolCalls?: Array<{ name: string }> }>; appId?: string | null; appName?: string | null };
+        try { data = (await res.json()) as typeof data; } catch { return txt("History returned invalid JSON."); }
+        const msgs = data.messages ?? [];
+        if (!msgs.length) return txt(`Session \`${session_id}\` has no messages (empty or unknown session id).`);
+        const out = msgs.map((m) => {
+          const c = (m.content || "").slice(0, 2000);
+          if (m.role === "user") return `**You:** ${c}`;
+          if (m.role === "assistant") {
+            const tools = (m.toolCalls ?? []).map((t) => `\`${t.name}\``).join(", ");
+            return `**AI:** ${c}${tools ? `\n  _(tools: ${tools})_` : ""}`;
+          }
+          return `_${m.role}:_ ${(m.content || "").slice(0, 500)}`;
+        });
+        const header = data.appName || data.appId ? `Game: **${data.appName || data.appId}**\n\n` : "";
+        return txt(`Transcript of \`${session_id}\` (${msgs.length} messages):\n\n${header}${out.join("\n\n")}`);
+      },
+    );
   }
 }
 

@@ -51,7 +51,14 @@ export default {
 
     // Step 1 — MCP client lands here. Stash its OAuth request, bounce to auth worker.
     if (url.pathname === "/authorize") {
-      const oauthReqInfo = await env.OAUTH_PROVIDER.parseAuthRequest(request);
+      let oauthReqInfo;
+      try {
+        oauthReqInfo = await env.OAUTH_PROVIDER.parseAuthRequest(request);
+      } catch {
+        // Unknown/stale client (e.g. registered against an older server) — fail
+        // gracefully so mcp-remote re-registers instead of seeing a 500.
+        return new Response("invalid_client: please reconnect to re-register", { status: 400 });
+      }
       if (!oauthReqInfo.clientId) return new Response("invalid_request", { status: 400 });
 
       const reqId = crypto.randomUUID();
