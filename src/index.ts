@@ -576,7 +576,7 @@ Variants: primary | secondary | ghost | danger. Sizes: sm | md | lg.`,
         const token = this.props.token;
         if (!token) return txt("Not authenticated. Connect with a FGS session token.");
         const res = await fetch(`${this.env.AGENT_BASE}/sessions`, { headers: { Authorization: `Bearer ${token}` } });
-        if (!res.ok) return txt(`Could not list sessions (${res.status}).`);
+        if (!res.ok) return txt(`Could not list sessions (${res.status}). Your VibeCode session list isn't reachable yet — use session_history with a session id (from a console.freegamestore.online/create/<id> URL) to read a specific chat.`);
         let data: { sessions?: Array<{ id: string; name: string; gameId?: string; deployed?: boolean; createdAt?: string }> };
         try { data = (await res.json()) as typeof data; } catch { return txt("Sessions returned invalid JSON."); }
         const sessions = data.sessions ?? [];
