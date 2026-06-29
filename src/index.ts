@@ -567,6 +567,28 @@ Variants: primary | secondary | ghost | danger. Sizes: sm | md | lg.`,
       },
     );
 
+    // -- whoami (the authenticated user, straight from the OAuth props) --
+    this.server.tool(
+      "whoami",
+      "Show who you're authenticated as on the FreeGameStore MCP — your GitHub login and token identity.",
+      {},
+      async () => {
+        const login = this.props.userId;
+        const token = this.props.token;
+        if (!login && !token) return txt("Not authenticated — no session on this MCP connection.");
+        let claims = "";
+        if (token) {
+          try {
+            const p = token.split(".")[1]!.replace(/-/g, "+").replace(/_/g, "/");
+            const payload = JSON.parse(atob(p + "===".slice(0, (4 - (p.length % 4)) % 4))) as { sub?: string; name?: string; login?: string; exp?: number };
+            const exp = payload.exp ? new Date(payload.exp * 1000).toISOString() : "—";
+            claims = `\n- login: ${payload.login ?? "—"}\n- name: ${payload.name ?? "—"}\n- sub: ${payload.sub ?? "—"}\n- token expires: ${exp}`;
+          } catch { /* unsigned read, best effort */ }
+        }
+        return txt(`You are authenticated as **${login ?? "(unknown)"}**.${claims}`);
+      },
+    );
+
     // -- list_sessions (your VibeCode sessions from the web console) --
     this.server.tool(
       "list_sessions",
