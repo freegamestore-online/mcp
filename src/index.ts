@@ -224,7 +224,9 @@ export class FgsMcpAgent extends McpAgent<Env, unknown, McpProps> {
           { headers: { "User-Agent": "freegamestore-mcp" } }
         );
         if (!res.ok) return txt(`Leaderboard API error: ${res.status}`);
-        let data: { scores?: Array<{ name: string; score: number; created_at: string }> };
+        // The worker returns rows keyed `player_name` (not `name`); keep `name`
+        // as a fallback so this doesn't render "**undefined**".
+        let data: { scores?: Array<{ player_name?: string; name?: string; score: number; created_at: string }> };
         try {
           data = (await res.json()) as typeof data;
         } catch {
@@ -233,7 +235,7 @@ export class FgsMcpAgent extends McpAgent<Env, unknown, McpProps> {
         const scores = data.scores ?? [];
         if (scores.length === 0) return txt(`No leaderboard entries for ${game_id}.`);
         const lines = scores.map(
-          (s, i) => `${i + 1}. **${s.name}** — ${s.score} (${new Date(s.created_at).toLocaleDateString()})`
+          (s, i) => `${i + 1}. **${s.player_name ?? s.name ?? "Anonymous"}** — ${s.score} (${new Date(s.created_at).toLocaleDateString()})`
         );
         return txt(`Leaderboard for **${game_id}** (top ${scores.length}):\n\n${lines.join("\n")}`);
       }
@@ -375,8 +377,17 @@ Variants: primary | secondary | ghost | danger. Sizes: sm | md | lg.`,
           description: description || name,
           oneliner: description || name,
           creatorGithub: this.props.userId,
-        })) as { error?: string; detail?: string; success?: boolean; appUrl?: string; repoUrl?: string };
+        })) as { error?: string; detail?: string; success?: boolean; appUrl?: string; repoUrl?: string; steps?: Array<{ name: string; status: string }> };
         if (prov.error) return txt(`Provision failed: ${prov.error}${prov.detail ? ` — ${typeof prov.detail === "string" ? prov.detail : JSON.stringify(prov.detail)}` : ""}`);
+
+        // Never re-scaffold an existing game. Provision is idempotent and reports
+        // the repo step as "skip" when the repo already exists; scaffolding then
+        // pushes the bare template with replaceTree=true, which would WIPE every
+        // file the creator built via update_files. Bail before that.
+        const repoStep = prov.steps?.find((s) => s.name === "GitHub repo");
+        if (repoStep?.status === "skip") {
+          return txt(`**${game_id}** already exists — use \`update_files\` to change it. \`create_game\` would overwrite the repo with the empty template.`);
+        }
 
         // 2. Scaffold: fetch template, substitute, push -> triggers deploy
         try {
@@ -619,7 +630,13 @@ Variants: primary | secondary | ghost | danger. Sizes: sm | md | lg.`,
       "Read the full chat transcript of a VibeCode session by id (from list_sessions, or a console.freegamestore.online/create/<id> URL) — the conversation between you and the platform's AI game builder.",
       { session_id: z.string().describe("VibeCode session id") },
       async ({ session_id }) => {
-        const res = await fetch(`${this.env.AGENT_BASE}/session/${encodeURIComponent(session_id)}/history`);
+        const token = this.props.token;
+        if (!token) return txt("Not authenticated. Connect with a FGS session token.");
+        // The agent worker gates every /session/* route — without the token this
+        // always 401'd. resolveUser accepts a Bearer token.
+        const res = await fetch(`${this.env.AGENT_BASE}/session/${encodeURIComponent(session_id)}/history`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
         if (!res.ok) return txt(`Could not fetch history (${res.status}).`);
         let data: { messages?: Array<{ role: string; content?: string; toolCalls?: Array<{ name: string }> }>; appId?: string | null; appName?: string | null };
         try { data = (await res.json()) as typeof data; } catch { return txt("History returned invalid JSON."); }
